@@ -11,6 +11,7 @@ from collections import defaultdict
 from typing import AsyncGenerator, List, Optional
 
 import redis
+
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI
@@ -60,6 +61,7 @@ def read_root():
 
 
 async def request(val: List[dict[str, str]]) -> AsyncGenerator[dict, None]:
+
     url = api_url
     headers = {
         "Content-Type": "application/json",
@@ -76,7 +78,7 @@ async def request(val: List[dict[str, str]]) -> AsyncGenerator[dict, None]:
     }
     async with AsyncClient() as client:
         async with client.stream(
-                "POST", url, headers=headers, json=params, timeout=60
+            "POST", url, headers=headers, json=params, timeout=60
         ) as response:
             async for line in response.aiter_lines():
                 if not line.strip():
@@ -169,7 +171,6 @@ async def chat_stream(input: Optional[str] = None) -> EventSourceResponse:
             executed_result = executed_result_dict
 
         # 将执行结果存入redis，在本async方法中，无法直接返回执行结果，因为返回的是一个异步生成器
-        # 在前端通过ajax轮询redis获取执行结果
         # 因为对应前端方法，也不适合需要传参的asyncio的Future或者Queue
         redis_conn = redis.Redis(host='localhost', port=6379, db=0)
         redis_conn.set('sql_executed_result', json.dumps(executed_result))

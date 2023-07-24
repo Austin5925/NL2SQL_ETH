@@ -14,6 +14,7 @@ import pymysql
 from dbutils.pooled_db import PooledDB
 
 
+
 class DatabaseManager:
     """
     使用连接池管理数据库连接
@@ -106,6 +107,7 @@ class DatabaseManager:
 #     async def close(self):
 #         self.pool.close()
 #         await self.pool.wait_closed()
+
 
 
 #
