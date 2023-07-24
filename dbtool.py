@@ -8,10 +8,10 @@
 # from urllib.parse import urlparse, parse_qsl
 # from dbutils.pooled_db import PooledDB
 
-import asyncio
+import re
 
-# import pymysql
-import aiomysql
+import pymysql
+from dbutils.pooled_db import PooledDB
 
 
 class DatabaseManager:
@@ -20,27 +20,92 @@ class DatabaseManager:
     """
 
     def __init__(
-        self, host="localhost", user="root", password="111",
-            database="eth20230701"
+            self, host="localhost", user="root", port=3306, password="111",
+            database="eth_data"
     ):
-        self.loop = asyncio.get_event_loop()
-        self.pool = self.loop.run_until_complete(
-            aiomysql.create_pool(
-                host=host, user=user, password=password, db=database,
-                autocommit=True
-            )
+        self.pool = PooledDB(
+            creator=pymysql,  # 使用pymysql库
+            maxconnections=0,  # 连接池允许的最大连接数，0表示不限制连接数
+            mincached=4,  # 初始化时，连接池中至少创建的空闲的连接，0表示不创建
+            maxcached=5,  # 连接池空闲的最多连接数，0和None表示不限制
+            maxshared=3,
+            blocking=True,  # 连接池中如果没有可用连接后，是否阻塞等待。True，等待；False，不等待然后报错
+            host=host, user=user, password=password, database=database,
+            autocommit=True
         )
 
-    async def execute_query(self, query):
-        async with self.pool.acquire() as conn:
-            async with conn.cursor(aiomysql.DictCursor) as cur:
-                await cur.execute(query)
-                result = await cur.fetchall()
+    def execute_query(self, query) -> dict:
+        """
+        执行查询
+        """
+        with self.pool.connection() as conn:
+            with conn.cursor(pymysql.cursors.DictCursor) as cur:
+                query = self.check_schema(query)
+                if query["code"] == 200:
+                    sql_query = query["data"]
+                    cur.execute(sql_query)
+                    result = {"code": 200, "data": cur.fetchall()}
+                else:
+                    result = query
         return result
 
-    async def close(self):
+    def check_schema(self, query) -> dict:
+        """
+        检查sql语句是否符合要求
+        """
+        if "SELECT" in query:
+            sql = "SELECT " + query.split("SELECT")[-1]
+            match = re.search(r"(SELECT.*?;)", sql, re.DOTALL)
+            if match:
+                sql = match.group(1)
+                return {"code": 200, "data": sql}
+            else:
+                return {"code": 5001, "error": "sql语句生成但未能正确执行，可能存在错误"}
+        else:
+            return {"code": 5002, "error": "答案中不包含sql语句"}
+
+    def close(self):
+        """
+        关闭连接池
+        """
         self.pool.close()
-        await self.pool.wait_closed()
+
+# import asyncio
+#
+# import pymysql
+# import aiomysql
+#
+#
+# class DatabaseManager:
+#     """
+#     使用连接池管理数据库连接
+#     """
+#
+#     def __init__(
+#         self, host="localhost", user="root", port=3306, password="111",
+#             database="eth_data"
+#     ):
+#         self.loop = asyncio.get_event_loop()
+#         self.pool = self.loop.run_until_complete(
+#             aiomysql.create_pool(
+#                 host=host, user=user, password=password, db=database,
+#                 autocommit=True
+#             )
+#         )
+#
+#     # async def init_pool(self):
+#     #     self.pool = await aiomysql.create_pool(self, loop=self.loop)
+#
+#     async def execute_query(self, query):
+#         async with self.pool.acquire() as conn:
+#             async with conn.cursor(aiomysql.DictCursor) as cur:
+#                 await cur.execute(query)
+#                 result = await cur.fetchall()
+#         return result
+#
+#     async def close(self):
+#         self.pool.close()
+#         await self.pool.wait_closed()
 
 
 #
