@@ -10,3 +10,6 @@ sse-starlette~=0.4.0
 aiomysql~=0.0.21
 redis~=3.5.3
 itsdangerous
+
+httpx~=0.24.1
+requests~=2.31.0
