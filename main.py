@@ -13,7 +13,7 @@ from typing import AsyncGenerator, Dict, List, Optional
 import redis
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # from fastapi.responses import HTMLResponse
@@ -39,6 +39,7 @@ db_user = os.getenv("DB_USER")
 db_password = os.getenv("DB_PASSWORD")
 
 GPT_MODEL = "gpt-4"
+GPT_TEMPERATURE = 0.3
 
 
 class DecimalEncoder(json.JSONEncoder):
@@ -56,12 +57,27 @@ class Conversation:
     """
     存储对话信息
     """
+
     def __init__(self):
         self.conversation_history: List[Dict] = []
 
     def add_message(self, role, content):
         message = {"role": role, "content": content}
         self.conversation_history.append(message)
+
+
+redis_pool = redis.ConnectionPool(host='localhost', port=6379, db=1)
+r = redis.Redis(connection_pool=redis_pool)
+
+
+def get_redis():
+    """获取redis db=1的连接，以待刷新对话缓存"""
+    try:
+        yield r
+    except Exception as e:
+        print("error: ", e)
+    # finally:
+    #     r.close()
 
 
 app = FastAPI()
@@ -74,6 +90,15 @@ app.add_middleware(
     allow_methods=["*"],  # 允许所有方法
     allow_headers=["*"],  # 允许所有头
 )
+
+
+@app.get("/refresh")
+def refresh_page(r: redis.Redis = Depends(get_redis)):
+    """刷新页面，清空redis缓存"""
+    r.flushdb()
+    # redis_pool = redis.ConnectionPool(host='localhost', port=6379, db=1)
+    # r = redis.Redis(connection_pool=redis_pool)
+    return {"message": "Redis db=1 cache cleared!"}
 
 
 @app.get("/")
@@ -101,7 +126,7 @@ async def request(val: List[dict[str, str]], call_function: bool) \
         "model": GPT_MODEL,
         "messages": val,
         "max_tokens": 3000,
-        "temperature": 0.5,
+        "temperature": GPT_TEMPERATURE,
         "top_p": 1,
         "n": 1,
         "stream": True,
@@ -126,7 +151,7 @@ async def request(val: List[dict[str, str]], call_function: bool) \
     #                           ]
     async with AsyncClient() as client:
         async with client.stream(
-            "POST", url, headers=headers, json=params, timeout=60
+                "POST", url, headers=headers, json=params, timeout=60
         ) as response:
             async for line in response.aiter_lines():
                 if not line.strip():
@@ -222,15 +247,13 @@ async def chat_stream(input: Optional[str] = None) -> EventSourceResponse:
 
         # 将执行结果存入redis，在本async方法中，无法直接返回执行结果，因为返回的是一个异步生成器
         # 因为对应前端方法，也不适合需要传参的asyncio的Future或者Queue
-        redis_conn = redis.Redis(host='localhost', port=6379, db=0)
         if "Value" in sql_result or "GasFee" in sql_result or "GasPrice" \
                 in sql_result:
             # 处理Decimal类型
-            redis_conn.set('sql_executed_result',
-                           json.dumps(executed_result, cls=DecimalEncoder))
+            r.set('sql_executed_result',
+                  json.dumps(executed_result, cls=DecimalEncoder))
         else:
-            redis_conn.set('sql_executed_result', json.dumps(executed_result))
-        redis_conn.close()
+            r.set('sql_executed_result', json.dumps(executed_result))
 
     return EventSourceResponse(event_generator())
 
@@ -251,8 +274,9 @@ async def multi_chat_stream(input: Optional[str] = None) \
     question = input
 
     base_prompt = f"""你是一个资深客服，你的工作是判断用户是否提出了表述清楚、细节明确的问题。
-        如果用户问题不清楚，你需要逐步引导用户补充细节，直到用户提出了清晰的问题。
-        如果用户问题清晰，你需要复述概括用户需求，然后调用查询数据库函数查询数据库，返回SQL语句。
+        直到用户问出了清晰明确的问题为止，你需要一直逐步引导用户补充细节。
+        在用户问出清晰明确的问题之前，不能以“您的问题已经足够清楚：”开头来回复。
+        如果用户问题清晰，你需要复述概括用户需求，然后提醒用户可以直接点击查询按钮，也可以继续聊天。
         你的数据库是一个以太坊的交易数据表（mysql），表名是 `eth20230701`，具有以下字段：
         - `Index`：int(11)
         - `TxHash`：varchar(64)
@@ -274,7 +298,10 @@ async def multi_chat_stream(input: Optional[str] = None) \
         3.一个表述清楚、细节明确的问题，应该在时间上是具体的，在需求上也是可被理解转述的。如果不满足这两点，就需要引导用户补充细节。
         4.引导用户补充细节时，针对用户提问中模糊的部分进行引导提问，而不是直接要求用户提供完整的问题。
         5.在用户补充细节后或者问题本身足够清楚，你需要根据多轮对话内容，转述概括用户需求，
-            然后询问用户是否用此信息查询数据库还是要继续对话增添信息。在这种情况下，你的回答必须以“您的问题已经足够清楚”开头。
+            然后询问用户是否用此信息查询数据库还是要继续对话增添信息。在这种情况下，你的回答必须以“您的问题已经足够清楚：”开头。
+        6.以“您的问题已经足够清楚：”开头回复意味着你认为用户的问题已经足够清楚，可以直接查询数据库了。
+        7.在“您的问题已经足够清楚：”和“。”之间，转述概括用户问题。如果问题没有说完，不要出现句号。
+        8.在句号后面，提醒用户可以直接用此信息查询数据库，也可以继续对话增添信息。
     """
 
     # 判断是不是第一次问
@@ -286,14 +313,28 @@ async def multi_chat_stream(input: Optional[str] = None) \
     #             },
     #         ],
     #     }
-    message = {"default": [{"role": "system", "content": base_prompt}]}
+    result_tmp = []
+    try:
+        length = int(r.get("len"))
+    except Exception as e:
+        print("First round! Outputs: ", e)
+        length = 0
+    for i in range(length):
+        # Get the JSON string from Redis and convert it back to a dictionary
+        item = json.loads(r.get(f"conversation:{i}"))
+        result_tmp.append(item)
+    message = {"default": result_tmp}
+    # print(message)
+    if not message["default"]:
+        message = {"default": [{"role": "system", "content": base_prompt}]}
     if question is not None:
         message["default"].append({"role": "user", "content": question})
     else:
         1  # todo
 
+    print(message)
+
     chat_msg = defaultdict(str)
-    print(chat_msg)
 
     async def event_generator():
         """生成事件，获取流信息"""
@@ -324,10 +365,13 @@ async def multi_chat_stream(input: Optional[str] = None) \
         # 判断函数调用
         # else:
         message["default"].append({"role": "assistant", "content": answer})
-        redis_conn = redis.Redis(host='localhost', port=6379, db=1)
-        for item in message["default"]:
-            redis_conn.hset("rhash", item["role"], item["content"])
-        redis_conn.close()
+        # todo，格式
+        r.set("len", len(message["default"]))
+        for i, item in enumerate(message["default"]):
+            # Convert the dictionary to a JSON string and store it in Redis
+            r.set(f"conversation:{i}", json.dumps(item))
+        # for item in message["default"]:  # todo，可能重复存入之前对话信息
+        #     r.hset("rhash", item["role"], item["content"])
         if "您的问题已经足够清楚" in answer:
             # todo
             # 调用查询数据库函数
@@ -343,9 +387,11 @@ async def multi_chat_stream(input: Optional[str] = None) \
             # redis_conn = redis.Redis(host='localhost', port=6379, db=1)
             # redis_conn.hset("rhash", "assistant", executed_result)
             # redis_conn.close()
-            pass
+            print("清楚")
+            r.set("isClear", "1")
         else:
-            pass
+            print("不清楚")
+            r.set("isClear", "0")
 
         # if executed_result_dict["code"] == 200:
         #     executed_result = executed_result_dict["data"]
@@ -362,16 +408,21 @@ def get_multichat_result():
     """
     前端通过获取多轮对话，从redis中返回
     """
-    redis_conn = redis.Redis(host='localhost', port=6379, db=1)
-    result = redis_conn.hgetall('rhash')
-    redis_conn.close()
-    new_list = []
-    for k, v in result.items():
-        new_list.append({k.decode(): v.decode()})
-        # todo，这里的decode是为了兼容redis的返回值，后面可以去掉
-    final_dict = {"default": new_list}
+    # result = r.hgetall('rhash')
+    # new_list = []
+    # for k, v in result.items():
+    #     new_list.append({k.decode(): v.decode()})
+    #     # todo，这里的decode是为了兼容redis的返回值，后面可以去掉
+    # final_dict = {"default": new_list, "isClear": r.get("isClear")}
+    result_tmp = []
+    length = int(r.get("len"))
+    for i in range(length):
+        # Get the JSON string from Redis and convert it back to a dictionary
+        item = json.loads(r.get(f"conversation:{i}"))
+        result_tmp.append(item)
+    result = {"default": result_tmp}
+    result_tmp.append({"isClear": r.get("isClear").decode()})
     if result is not None:
-        result = final_dict
         print(result)
         if isinstance(result, dict):
             # 正确结果
@@ -396,10 +447,8 @@ def get_executed_result():
     """
     前端通过获取SQL执行结果，从redis中返回
     """
-    redis_conn = redis.Redis(host='localhost', port=6379, db=0)
-    result = redis_conn.get('sql_executed_result')
-    redis_conn.delete('sql_executed_result')
-    redis_conn.close()
+    result = r.get('sql_executed_result')
+    r.delete('sql_executed_result')
     if result is not None:
         result = json.loads(result)
         print(result)
