@@ -8,10 +8,28 @@
 # from urllib.parse import urlparse, parse_qsl
 # from dbutils.pooled_db import PooledDB
 
+import os
 import re
 
 import pymysql
 from dbutils.pooled_db import PooledDB
+from dotenv import load_dotenv
+
+load_dotenv()
+db_host = os.getenv("DB_HOST")
+db_port = os.getenv("DB_PORT")
+db_user = os.getenv("DB_USER")
+db_password = os.getenv("DB_PASSWORD")
+
+
+def get_sql_execute_result(sql: str) -> dict:
+    """
+    得到SQL查询结果
+    """
+    db = DatabaseManager()
+    result = db.execute_query(sql)
+    db.close()
+    return result
 
 
 class DatabaseManager:
@@ -20,8 +38,7 @@ class DatabaseManager:
     """
 
     def __init__(
-            self, host="localhost", user="root", port=3306, password="111",
-            database="eth_data"
+        self, host=db_host, user=db_user, port=db_port, password=db_password, database="eth_data"
     ):
         self.pool = PooledDB(
             creator=pymysql,  # 使用pymysql库
@@ -30,8 +47,11 @@ class DatabaseManager:
             maxcached=5,  # 连接池空闲的最多连接数，0和None表示不限制
             maxshared=3,
             blocking=True,  # 连接池中如果没有可用连接后，是否阻塞等待。True，等待；False，不等待然后报错
-            host=host, user=user, password=password, database=database,
-            autocommit=True
+            host=host,
+            user=user,
+            password=password,
+            database=database,
+            autocommit=True,
         )
 
     def execute_query(self, query) -> dict:
@@ -69,6 +89,7 @@ class DatabaseManager:
         关闭连接池
         """
         self.pool.close()
+
 
 # import asyncio
 #
