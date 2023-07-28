@@ -94,8 +94,6 @@ app.add_middleware(
 def refresh_page(r: redis.Redis = Depends(get_redis)):
     """刷新页面，清空redis缓存"""
     r.flushdb()
-    # redis_pool = redis.ConnectionPool(host='localhost', port=6379, db=1)
-    # r = redis.Redis(connection_pool=redis_pool)
     return {"message": "Redis db=1 cache cleared!"}
 
 
@@ -254,13 +252,6 @@ async def chat_stream(input: Optional[str] = None) -> EventSourceResponse:
 
     return EventSourceResponse(event_generator())
 
-
-# def add_to_message(role: str, content: str, message):
-#     """
-#     将用户输入的问题添加到message中
-#     """
-#     message[0].append({"role": role, "content": content})
-#     return message
 
 @app.get("/multi-round-chat")
 async def multi_chat_stream(input: Optional[str] = None) \
