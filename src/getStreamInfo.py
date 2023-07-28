@@ -33,24 +33,6 @@ async def request(val: List[dict[str, str]]) -> AsyncGenerator[dict, None]:
         "n": 1,
         "stream": True,
     }
-    # if call_function:
-    #     params["function_call"] = "auto"
-    #     params["function"] = [{"name": "chat_stream",
-    #                            "description": "Generate the sql using
-    #                            the given question",
-    #                            "parameters": {
-    #                                    "type": "object",
-    #                                    "properties": {
-    #                                        "question": {
-    #                                            "type": "string",
-    #                                            "description":
-    #                                            "The paraphrased question"
-    #                                        },
-    #                                    },
-    #                                    "required": ["question"]
-    #                                },
-    #                            },
-    #                           ]
     async with AsyncClient() as client:
         async with client.stream("POST", url, headers=headers, json=params, timeout=60) as response:
             async for line in response.aiter_lines():
