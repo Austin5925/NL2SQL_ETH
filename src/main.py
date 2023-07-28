@@ -5,10 +5,8 @@
 # import traceback
 import json
 import os
-
-# import pprint
 from collections import defaultdict
-from typing import AsyncGenerator, Dict, List, Optional
+from typing import AsyncGenerator, List, Optional
 
 import redis
 import uvicorn
@@ -25,7 +23,7 @@ from sse_starlette.sse import EventSourceResponse
 # from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import JSONResponse
 
-import dbtool
+from utils import dbtool
 
 # from setting import cretKey, uuid_str, dumps
 
@@ -53,17 +51,17 @@ class ChatInput(BaseModel):
     input: str
 
 
-class Conversation:
-    """
-    存储对话信息
-    """
-
-    def __init__(self):
-        self.conversation_history: List[Dict] = []
-
-    def add_message(self, role, content):
-        message = {"role": role, "content": content}
-        self.conversation_history.append(message)
+# class Conversation:
+#     """
+#     存储对话信息
+#     """
+#
+#     def __init__(self):
+#         self.conversation_history: List[Dict] = []
+#
+#     def add_message(self, role, content):
+#         message = {"role": role, "content": content}
+#         self.conversation_history.append(message)
 
 
 redis_pool = redis.ConnectionPool(host='localhost', port=6379, db=1)
@@ -103,12 +101,12 @@ def refresh_page(r: redis.Redis = Depends(get_redis)):
 
 @app.get("/")
 def read_root():
-    return {"Hello": "World"}
+    return {"message": "Hello World"}
 
 
-class Chatbot:
-    def __init__(self):
-        self.conversation = Conversation()
+# class Chatbot:
+#     def __init__(self):
+#         self.conversation = Conversation()
 
 
 async def request(val: List[dict[str, str]], call_function: bool) \
@@ -221,7 +219,6 @@ async def chat_stream(input: Optional[str] = None) -> EventSourceResponse:
 
     message = [{"role": "user", "content": base_prompt}]
     chat_msg = defaultdict(str)
-    print(chat_msg)
 
     async def event_generator():
         """生成事件，获取流信息"""
@@ -305,15 +302,6 @@ async def multi_chat_stream(input: Optional[str] = None) \
         9.在句号后面，提醒用户可以直接用此信息查询数据库，也可以继续对话增添或修改信息。
     """
 
-    # 判断是不是第一次问
-    # response = {
-    #         "default": [
-    #             {
-    #                 "role": "system",
-    #                 "content": system_prompt,
-    #             },
-    #         ],
-    #     }
     result_tmp = []
     try:
         length = int(r.get("len"))
@@ -321,7 +309,7 @@ async def multi_chat_stream(input: Optional[str] = None) \
         print("First round! Outputs: ", e)
         length = 0
     for i in range(length):
-        # Get the JSON string from Redis and convert it back to a dictionary
+        # 将字符串转化为Json
         item = json.loads(r.get(f"conversation:{i}"))
         result_tmp.append(item)
     message = {"default": result_tmp}
@@ -330,8 +318,7 @@ async def multi_chat_stream(input: Optional[str] = None) \
         message = {"default": [{"role": "system", "content": base_prompt}]}
     if question is not None:
         message["default"].append({"role": "user", "content": question})
-    else:
-        1  # todo
+        # 输入为空的判定已经在前端实现
 
     print(message)
 
@@ -345,55 +332,29 @@ async def multi_chat_stream(input: Optional[str] = None) \
                     chat_msg["role"] = delta.get("role")
                 if delta.get("content"):
                     chat_msg["content"] += delta.get("content")
-                # if "function_call" in delta:
-                #     pprint.pprint(delta.get("function_call"))
-                #     todo
-                #     function_call_res += delta.get("function_call").
-                #     get("data")
-                #     redis_conn = redis.Redis(host='localhost', port=6379,
-                #     db=1)
-                #     redis_conn.delete('rhash')
-                #     redis_conn.close()
-                #     break
                 yield dict(id=None, event=None, data=json.dumps(chat_msg))
         except Exception as e:
             print("error: ", e)
 
         answer = chat_msg["content"]
         print(answer)
-        # if function_call_res:
-        #     await chat_stream("222")
-        # 判断函数调用
-        # else:
         message["default"].append({"role": "assistant", "content": answer})
         # todo，格式
         r.set("len", len(message["default"]))
         for i, item in enumerate(message["default"]):
-            # Convert the dictionary to a JSON string and store it in Redis
+            # Json转为字符串，然后才能放进redis
             r.set(f"conversation:{i}", json.dumps(item))
         # for item in message["default"]:  # todo，可能重复存入之前对话信息
         #     r.hset("rhash", item["role"], item["content"])
         if "您的问题已经足够清楚" in answer:
-            # todo
-            # 调用查询数据库函数
-            # executed_result_dict = get_sql_execute_result(sql_result)
-            # print(executed_result_dict)
-            # if executed_result_dict["code"] == 200:
-            #     executed_result = executed_result_dict["data"]
-            #     draw_charts(executed_result)
-            # else:
-            #     executed_result = executed_result_dict
-            # message["default"].append({"role": "assistant", "content":
-            # executed_result})
-            # redis_conn = redis.Redis(host='localhost', port=6379, db=1)
-            # redis_conn.hset("rhash", "assistant", executed_result)
-            # redis_conn.close()
+            # 是否调用查询数据库函数，选择权交还给前端用户
             print("清楚")
             r.set("isClear", "1")
         else:
             print("不清楚")
             r.set("isClear", "0")
 
+        # todo，画图
         # if executed_result_dict["code"] == 200:
         #     executed_result = executed_result_dict["data"]
         #
@@ -409,16 +370,11 @@ def get_multichat_result():
     """
     前端通过获取多轮对话，从redis中返回
     """
-    # result = r.hgetall('rhash')
-    # new_list = []
-    # for k, v in result.items():
-    #     new_list.append({k.decode(): v.decode()})
-    #     # todo，这里的decode是为了兼容redis的返回值，后面可以去掉
-    # final_dict = {"default": new_list, "isClear": r.get("isClear")}
+    # 不要用r.hgetall("rhash")。哈希表此处不适合存储对话信息
     result_tmp = []
     length = int(r.get("len"))
     for i in range(length):
-        # Get the JSON string from Redis and convert it back to a dictionary
+        # 从字符串转回Json
         item = json.loads(r.get(f"conversation:{i}"))
         result_tmp.append(item)
     result = {"default": result_tmp}
