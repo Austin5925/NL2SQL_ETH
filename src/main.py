@@ -6,7 +6,7 @@ from typing import Optional
 
 import redis
 import uvicorn
-from fastapi import Depends, FastAPI
+from fastapi import Body, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # from fastapi.responses import HTMLResponse
@@ -79,6 +79,37 @@ def read_root():
 # class Chatbot:
 #     def __init__(self):
 #         self.conversation = Conversation()
+
+
+@app.get("/prompt")
+def get_prompt():
+    """
+    前端获取提示语
+    """
+    prompt_base_chat = Prompt.base_prompt_chat
+    prompt_base_query = Prompt.base_prompt_query
+    prompt = {"promptBaseChat": prompt_base_chat, "promptBaseQuery": prompt_base_query}
+    return {"code": 200, "data": prompt}
+
+
+@app.post("/promptUpdate")
+def update_prompt(prompt: str = Body(...), prompt_type: int = Body(...)):
+    """
+    前端更新提示语
+    """
+    print(prompt)
+    try:
+        if prompt_type == 1:
+            prompt_base_chat = prompt
+            Prompt.base_prompt_chat = prompt_base_chat
+        elif prompt_type == 0:
+            prompt_base_query = prompt
+            Prompt.base_prompt_query = prompt_base_query
+        else:
+            return {"code": 501, "data": "Error: promptType error!"}
+        return {"code": 200, "data": "success"}
+    except Exception as e:
+        return {"code": 502, "data": "Error: " + str(e)}
 
 
 @app.get("/chat")
